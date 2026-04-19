@@ -5,35 +5,53 @@ NVCC = nvcc
 
 # 编译选项
 CXXFLAGS = -std=c++17
-CUDA_FLAGS = -arch=sm_80 -rdc=true
 
-# CUTE 头文件路径（需要根据实际 CUTLASS 安装位置调整）
+# CUTE 头文件路径
 CUTLASS_PATH = ../cutlass/include
 INCLUDES = -I$(CUTLASS_PATH) -I$(CUTLASS_PATH)/cute
 
-# 目标文件
-TARGETS = 04_basic 05_advanced 06_practical
+# ============================================================================
+# 常规 Swizzle 示例 (sm_80+)
+# ============================================================================
 
-# 源文件
-SRCS = 04_code_example_basic.cu 05_code_example_advanced.cu 06_code_example_practical.cu
+SWIZZLE_ARCH = -arch=sm_80 -rdc=true
+SWIZZLE_TARGETS = 04_basic 05_advanced 06_practical
 
 # 默认目标
-all: $(TARGETS)
+all: $(SWIZZLE_TARGETS)
 
-# 编译基础示例
 04_basic: 04_code_example_basic.cu
-	$(NVCC) $(CXXFLAGS) $(CUDA_FLAGS) $(INCLUDES) $< -o $@
+	$(NVCC) $(CXXFLAGS) $(SWIZZLE_ARCH) $(INCLUDES) $< -o $@
 
-# 编译进阶示例
 05_advanced: 05_code_example_advanced.cu
-	$(NVCC) $(CXXFLAGS) $(CUDA_FLAGS) $(INCLUDES) $< -o $@
+	$(NVCC) $(CXXFLAGS) $(SWIZZLE_ARCH) $(INCLUDES) $< -o $@
 
-# 编译实战示例
 06_practical: 06_code_example_practical.cu
-	$(NVCC) $(CXXFLAGS) $(CUDA_FLAGS) $(INCLUDES) $< -o $@
+	$(NVCC) $(CXXFLAGS) $(SWIZZLE_ARCH) $(INCLUDES) $< -o $@
 
-# 运行所有示例
-run: $(TARGETS)
+# ============================================================================
+# TMA 示例 (sm_90+, Hopper only)
+# ============================================================================
+
+TMA_ARCH = -arch=sm_90 -rdc=true
+TMA_TARGETS = 04_tma_basic 05_tma_advanced 06_tma_gemm
+
+tma_all: $(TMA_TARGETS)
+
+04_tma_basic: tma/04_code_tma_basic.cu
+	$(NVCC) $(CXXFLAGS) $(TMA_ARCH) $(INCLUDES) $< -o $@
+
+05_tma_advanced: tma/05_code_tma_advanced.cu
+	$(NVCC) $(CXXFLAGS) $(TMA_ARCH) $(INCLUDES) $< -o $@
+
+06_tma_gemm: tma/06_code_tma_gemm.cu
+	$(NVCC) $(CXXFLAGS) $(TMA_ARCH) $(INCLUDES) $< -o $@
+
+# ============================================================================
+# 运行示例
+# ============================================================================
+
+run: $(SWIZZLE_TARGETS)
 	@echo "========================================"
 	@echo "  运行基础示例"
 	@echo "========================================"
@@ -49,39 +67,64 @@ run: $(TARGETS)
 	@echo "========================================"
 	./06_practical
 
+run_tma: $(TMA_TARGETS)
+	@echo "========================================"
+	@echo "  运行 TMA 示例"
+	@echo "========================================"
+	@echo "注意：需要 Hopper (sm_90) GPU!"
+	@echo "========================================"
+	./04_tma_basic
+	@echo ""
+	./05_tma_advanced
+	@echo ""
+	./06_tma_gemm
+
+# ============================================================================
 # 清理
+# ============================================================================
+
 clean:
-	rm -f $(TARGETS)
+	rm -f $(SWIZZLE_TARGETS) $(TMA_TARGETS)
 
-# 单独运行某个示例
-run_basic: 04_basic
-	./04_basic
+clean_swizzle:
+	rm -f $(SWIZZLE_TARGETS)
 
-run_advanced: 05_advanced
-	./05_advanced
+clean_tma:
+	rm -f $(TMA_TARGETS)
 
-run_practical: 06_practical
-	./06_practical
-
+# ============================================================================
 # 帮助信息
+# ============================================================================
+
 help:
 	@echo "CUTE Swizzle Learn Makefile"
 	@echo ""
 	@echo "可用目标:"
-	@echo "  all          - 编译所有示例 (默认)"
-	@echo "  04_basic     - 编译基础示例"
-	@echo "  05_advanced  - 编译进阶示例"
-	@echo "  06_practical - 编译实战示例"
-	@echo "  run          - 编译并运行所有示例"
-	@echo "  run_basic    - 运行基础示例"
-	@echo "  run_advanced - 运行进阶示例"
-	@echo "  run_practical - 运行实战示例"
-	@echo "  clean        - 删除编译生成的文件"
-	@echo "  help         - 显示此帮助信息"
+	@echo "  常规 Swizzle 示例 (sm_80+):"
+	@echo "    all           - 编译所有常规示例 (默认)"
+	@echo "    04_basic      - 编译基础示例"
+	@echo "    05_advanced   - 编译进阶示例"
+	@echo "    06_practical  - 编译实战示例"
+	@echo "    run           - 运行所有常规示例"
+	@echo ""
+	@echo "  TMA 示例 (sm_90+, Hopper only):"
+	@echo "    tma_all       - 编译所有 TMA 示例"
+	@echo "    04_tma_basic  - 编译 TMA 基础示例"
+	@echo "    05_tma_advanced - 编译 TMA 进阶示例"
+	@echo "    06_tma_gemm   - 编译 TMA GEMM 示例"
+	@echo "    run_tma       - 运行所有 TMA 示例"
+	@echo ""
+	@echo "  清理:"
+	@echo "    clean         - 删除所有编译产物"
+	@echo "    clean_swizzle - 删除常规示例编译产物"
+	@echo "    clean_tma     - 删除 TMA 示例编译产物"
 	@echo ""
 	@echo "使用示例:"
-	@echo "  make              # 编译所有"
-	@echo "  make run_basic    # 运行基础示例"
+	@echo "  make              # 编译所有常规示例"
+	@echo "  make tma_all      # 编译所有 TMA 示例"
+	@echo "  make run          # 运行常规示例"
 	@echo "  make clean        # 清理"
+	@echo ""
+	@echo "注意：TMA 示例需要 Hopper 架构 GPU (sm_90)"
 
-.PHONY: all run clean run_basic run_advanced run_practical help
+.PHONY: all tma_all run run_tma clean clean_swizzle clean_tma help

@@ -1,0 +1,18 @@
+# TMA 编译产物
+*.o
+*.out
+*.cubin
+*.fatbin
+*.ptx
+*.linkinfo
+*.log
+
+# 可执行文件
+04_tma_basic
+05_tma_advanced
+06_tma_gemm
+*_tma_*
+
+# 临时文件
+*.tmp
+*.bak
