@@ -26,6 +26,10 @@
 *_basic
 *_advanced
 *_practical
+*_tma_*
+04_tma_basic
+05_tma_advanced
+06_tma_gemm
 
 # Make 生成文件
 *.d
