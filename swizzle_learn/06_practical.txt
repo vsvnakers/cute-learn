@@ -1,0 +1,74 @@
+========================================
+  CUTE Swizzle 实战示例代码
+========================================
+
+======================================================================
+  示例 1: 矩阵转置中的 Swizzle 应用
+======================================================================
+
+矩阵大小：1024x1024
+朴素转置时间：2.669 ms
+Swizzle 转置时间：0.036 ms
+结果验证：通过
+
+======================================================================
+  示例 2: GEMM 中的 Swizzle 优化
+======================================================================
+
+GEMM 结果验证 (M=N=K=256):
+  期望值：512.000
+  朴素 GEMM 结果：512.000
+  Swizzle GEMM 结果：512.000
+  验证结果：通过
+
+======================================================================
+  示例 3: Swizzle 地址计算详细可视化
+======================================================================
+
+Swizzle<2, 4, 3> 的详细计算过程:
+
+Offset  0 (bin: 000000) -> shift=0 -> mask=0 -> xor=0 -> result= 0 (bin: 000000) [Bank: 0 -> 0]
+Offset  1 (bin: 000001) -> shift=0 -> mask=0 -> xor=0 -> result= 1 (bin: 000001) [Bank: 0 -> 0]
+Offset  2 (bin: 000010) -> shift=0 -> mask=0 -> xor=0 -> result= 2 (bin: 000010) [Bank: 0 -> 0]
+Offset  3 (bin: 000011) -> shift=0 -> mask=0 -> xor=0 -> result= 3 (bin: 000011) [Bank: 0 -> 0]
+Offset  4 (bin: 000100) -> shift=0 -> mask=0 -> xor=0 -> result= 4 (bin: 000100) [Bank: 1 -> 1]
+Offset  5 (bin: 000101) -> shift=0 -> mask=0 -> xor=0 -> result= 5 (bin: 000101) [Bank: 1 -> 1]
+Offset  6 (bin: 000110) -> shift=0 -> mask=0 -> xor=0 -> result= 6 (bin: 000110) [Bank: 1 -> 1]
+Offset  7 (bin: 000111) -> shift=0 -> mask=0 -> xor=0 -> result= 7 (bin: 000111) [Bank: 1 -> 1]
+Offset  8 (bin: 001000) -> shift=1 -> mask=1 -> xor=4 -> result=12 (bin: 001100) [Bank: 2 -> 2]
+Offset  9 (bin: 001001) -> shift=1 -> mask=1 -> xor=4 -> result=13 (bin: 001101) [Bank: 2 -> 2]
+Offset 10 (bin: 001010) -> shift=1 -> mask=1 -> xor=4 -> result=14 (bin: 001110) [Bank: 2 -> 2]
+Offset 11 (bin: 001011) -> shift=1 -> mask=1 -> xor=4 -> result=15 (bin: 001111) [Bank: 2 -> 2]
+Offset 12 (bin: 001100) -> shift=1 -> mask=1 -> xor=4 -> result= 8 (bin: 001000) [Bank: 3 -> 3]
+Offset 13 (bin: 001101) -> shift=1 -> mask=1 -> xor=4 -> result= 9 (bin: 001001) [Bank: 3 -> 3]
+Offset 14 (bin: 001110) -> shift=1 -> mask=1 -> xor=4 -> result=10 (bin: 001010) [Bank: 3 -> 3]
+Offset 15 (bin: 001111) -> shift=1 -> mask=1 -> xor=4 -> result=11 (bin: 001011) [Bank: 3 -> 3]
+Offset 16 (bin: 010000) -> shift=2 -> mask=2 -> xor=8 -> result=24 (bin: 011000) [Bank: 4 -> 4]
+Offset 17 (bin: 010001) -> shift=2 -> mask=2 -> xor=8 -> result=25 (bin: 011001) [Bank: 4 -> 4]
+Offset 18 (bin: 010010) -> shift=2 -> mask=2 -> xor=8 -> result=26 (bin: 011010) [Bank: 4 -> 4]
+Offset 19 (bin: 010011) -> shift=2 -> mask=2 -> xor=8 -> result=27 (bin: 011011) [Bank: 4 -> 4]
+Offset 20 (bin: 010100) -> shift=2 -> mask=2 -> xor=8 -> result=28 (bin: 011100) [Bank: 5 -> 5]
+Offset 21 (bin: 010101) -> shift=2 -> mask=2 -> xor=8 -> result=29 (bin: 011101) [Bank: 5 -> 5]
+Offset 22 (bin: 010110) -> shift=2 -> mask=2 -> xor=8 -> result=30 (bin: 011110) [Bank: 5 -> 5]
+Offset 23 (bin: 010111) -> shift=2 -> mask=2 -> xor=8 -> result=31 (bin: 011111) [Bank: 5 -> 5]
+Offset 24 (bin: 011000) -> shift=3 -> mask=3 -> xor=12 -> result=20 (bin: 010100) [Bank: 6 -> 6]
+Offset 25 (bin: 011001) -> shift=3 -> mask=3 -> xor=12 -> result=21 (bin: 010101) [Bank: 6 -> 6]
+Offset 26 (bin: 011010) -> shift=3 -> mask=3 -> xor=12 -> result=22 (bin: 010110) [Bank: 6 -> 6]
+Offset 27 (bin: 011011) -> shift=3 -> mask=3 -> xor=12 -> result=23 (bin: 010111) [Bank: 6 -> 6]
+Offset 28 (bin: 011100) -> shift=3 -> mask=3 -> xor=12 -> result=16 (bin: 010000) [Bank: 7 -> 7]
+Offset 29 (bin: 011101) -> shift=3 -> mask=3 -> xor=12 -> result=17 (bin: 010001) [Bank: 7 -> 7]
+Offset 30 (bin: 011110) -> shift=3 -> mask=3 -> xor=12 -> result=18 (bin: 010010) [Bank: 7 -> 7]
+Offset 31 (bin: 011111) -> shift=3 -> mask=3 -> xor=12 -> result=19 (bin: 010011) [Bank: 7 -> 7]
+
+======================================================================
+  示例 4: 性能测试框架演示
+======================================================================
+
+不同 Swizzle 配置的性能（示意）:
+  Swizzle<2,4,3>: 配置有效
+  Swizzle<2,5,3>: 配置有效
+  Swizzle<3,5,4>: 配置有效
+
+========================================
+  所有实战示例完成！
+========================================

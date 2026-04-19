@@ -1,0 +1,1 @@
+/usr/bin/g++ @CMakeFiles/13_attention_v2.dir/objects1.rsp -o 13_attention_v2 @CMakeFiles/13_attention_v2.dir/linkLibs.rsp -L"/usr/local/cuda-12.8/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda-12.8/targets/x86_64-linux/lib"

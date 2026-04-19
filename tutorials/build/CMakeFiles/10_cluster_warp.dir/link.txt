@@ -1,0 +1,1 @@
+/usr/bin/g++ @CMakeFiles/10_cluster_warp.dir/objects1.rsp -o 10_cluster_warp @CMakeFiles/10_cluster_warp.dir/linkLibs.rsp -L"/usr/local/cuda-12.8/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda-12.8/targets/x86_64-linux/lib"

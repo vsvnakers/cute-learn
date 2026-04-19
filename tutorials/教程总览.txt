@@ -1,0 +1,190 @@
+========================================
+  CUTE & Tensor Core CUDA 编程教程
+========================================
+
+欢迎！这是一个完整的 CUTE (CUDA Universal Tensor Engine) 学习教程，
+带你从零基础到掌握使用 Tensor Core 编写高性能 CUDA 代码。
+
+========================================
+  教程结构
+========================================
+
+tutorials/
+├── README.md              # 主文档
+├── GUIDE.md               # 详细学习指南
+├── CHEATSHEET.md          # 快速参考手册
+├── CMakeLists.txt         # 编译配置
+│
+├── 01_layout/             # 第一课：Layout 布局系统
+│   ├── README.md          # 概念讲解
+│   └── 01_layout_basic.cu # 可运行示例
+│
+├── 02_swizzle/            # 第二课：Swizzle 技术
+│   ├── README.md
+│   └── 02_swizzle_basic.cu
+│
+├── 03_bank_conflict/      # 第三课：Bank Conflict 解决
+│   ├── README.md
+│   └── 03_bank_conflict.cu
+│
+├── 04_mma/                # 第四课：MMA 指令
+│   ├── README.md
+│   └── 04_mma_basic.cu
+│
+├── 05_gemm/               # 第五课：完整 GEMM 实现
+│   ├── README.md
+│   └── 05_gemm.cu
+│
+└── 06_attention/          # 第六课：Flash Attention
+    ├── README.md
+    └── 06_flash_attention.cu
+
+========================================
+  快速开始
+========================================
+
+1. 编译所有示例：
+   cd tutorials
+   mkdir build && cd build
+   cmake ..
+   make -j8
+
+2. 运行示例：
+   ./01_layout_basic
+   ./02_swizzle_basic
+   ...
+
+========================================
+  课程内容概览
+========================================
+
+第一课：Layout 布局系统
+------------------------
+学习 CUTE 的核心概念：Layout
+- Shape 和 Stride 的定义
+- Layout 的数学原理
+- Tensor 的创建和访问
+- 多维索引到线性偏移的映射
+
+关键代码：
+  auto layout = make_layout(make_shape(8, 8));
+  auto tensor = make_tensor(ptr, layout);
+  auto val = tensor(i, j);
+
+第二课：Swizzle 技术
+------------------------
+学习内存访问优化技术
+- Swizzle 函数原理
+- Swizzle Layout 创建
+- 实际应用场景
+
+关键代码：
+  auto swz = swizzle<2, 4, 2>{};
+  auto swizzled_layout = make_swizzle_layout(base_layout, swz);
+
+第三课：Bank Conflict 解决
+------------------------
+理解并解决共享内存访问冲突
+- GPU 共享内存架构
+- Bank Conflict 检测
+- Padding 和 Swizzle 优化
+
+关键代码：
+  __shared__ float smem[32 * 33];  // padding
+  auto swizzled = make_swizzle_layout(layout, swizzle<2,4,2>{});
+
+第四课：MMA 指令
+------------------------
+掌握 Tensor Core 的核心指令
+- Tensor Core 架构详解
+- MMA 指令格式
+- CUTE MMA Atom 使用
+
+关键代码：
+  using MMA = MMA_Atom<SM80_16x8x8_F32F16F16F32_TN>;
+  mma.sync.aligned.m16n8k8...
+
+第五课：完整 GEMM 实现
+------------------------
+从零实现优化的矩阵乘法
+- 朴素实现
+- 共享内存分块
+- Tensor Core 加速
+- 性能测试
+
+关键代码：
+  template<int BLOCK_SIZE>
+  __global__ void tiled_gemm(...)
+
+第六课：Flash Attention
+------------------------
+使用 CUTE 实现高效的 Attention
+- Attention 数学原理
+- Flash Attention 算法
+- 完整的 CUDA 实现
+
+关键代码：
+  Flash Attention: O = softmax(QK^T/√d)V
+
+========================================
+  学习路线
+========================================
+
+第 1 周：基础
+- 学习第 1-3 课
+- 理解 Layout 和 Swizzle
+- 掌握 Bank Conflict 优化
+
+第 2 周：核心
+- 学习第 4-5 课
+- 理解 Tensor Core
+- 实现完整 GEMM
+
+第 3 周：实战
+- 学习第 6 课
+- 实现 Flash Attention
+- 性能优化
+
+========================================
+  硬件要求
+========================================
+
+- 最低：支持 CUDA 的 NVIDIA GPU
+- Tensor Core: Volta (SM 70) 或更新
+- 推荐：Ampere (SM 80) 或更新
+
+编译时指定架构：
+  nvcc -arch=sm_80 ...  # Ampere
+  nvcc -arch=sm_90 ...  # Hopper
+
+========================================
+  下一步
+========================================
+
+完成本教程后，你可以：
+
+1. 阅读 CUTLASS 源码
+   https://github.com/NVIDIA/cutlass
+
+2. 学习 Flash Attention 论文
+   https://arxiv.org/abs/2205.14135
+
+3. 尝试实现其他算子：
+   - Convolution
+   - Layer Normalization
+   - RoPE (Rotary Position Embedding)
+
+========================================
+  获取帮助
+========================================
+
+遇到问题？
+
+1. 查看 GUIDE.md 获取详细指南
+2. 查看 CHEATSHEET.md 获取 API 参考
+3. 检查 CUDA 错误：cudaGetErrorString()
+4. 使用 Nsight 分析性能
+
+========================================
+
+祝你学习顺利！
