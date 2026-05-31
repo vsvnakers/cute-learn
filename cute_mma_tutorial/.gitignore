@@ -1,0 +1,29 @@
+# 编译产物
+01_layout_basics
+02_tensor_basics
+03_copy_basic
+04_copy_async
+05_mma_basic
+06_mma_register_layout
+07_tiled_mma
+08_cute_gemm
+09_async_copy_sm80
+10_shared_mem_gemm
+11_software_pipeline
+12_perf_async_gemm
+
+# 日志
+logs/
+
+# NCU 报告
+*_ncu.ncu-rep
+*_ncu.txt
+
+# Nsight Systems 报告
+*.nsys-rep
+*.sqlite
+
+# 其他
+*.o
+*.d
+*_output.txt
