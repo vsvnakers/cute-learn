@@ -44,21 +44,26 @@ using namespace cute;
 // GEMM 配置
 // ============================================================================
 
-// MMA: 16x8x16, FP16 input, FP16 accumulate
+// SM80_16x8x16_F16F16F16F16_TN:
+//   MMA一次处理M=16, N=8, K=16
+//   16x8的输出块, 用32个线程(warp), 每线程4个F16寄存器
+//   _F16F16F16F16: 所有类型都是F16 (比F32累加精度低但速度快)
 using MMA_OpType = SM80_16x8x16_F16F16F16F16_TN;
 using MMAAtom = MMA_Atom<MMA_OpType>;
 
-// Block tile 大小
-// bK 必须是 swizzle atom K 维度 (64) 的倍数
+// Block tile: 每个CTA (thread block) 处理的子矩阵大小
+// bM=bN=128: 2D grid, 每个CTA处理128x128的C块
+// bK=64: K方向每次加载64列 (必须是swizzle atom K维度64的倍数)
 constexpr int bM = 128;
 constexpr int bN = 128;
 constexpr int bK = 64;
 
-// SharedStorage
+// SharedStorage: 编译期分配SMEM空间的工具结构体
+// ArrayEngine<T, N>: 对齐的静态数组, cosize_v<Layout>计算所需元素数
 template <class SmemLayoutA, class SmemLayoutB>
 struct SharedStorage {
-    cute::ArrayEngine<half_t, cute::cosize_v<SmemLayoutA>> A;
-    cute::ArrayEngine<half_t, cute::cosize_v<SmemLayoutB>> B;
+    cute::ArrayEngine<half_t, cute::cosize_v<SmemLayoutA>> A;  // A矩阵SMEM
+    cute::ArrayEngine<half_t, cute::cosize_v<SmemLayoutB>> B;  // B矩阵SMEM
 };
 
 // ============================================================================
@@ -79,7 +84,8 @@ __global__ void shared_mem_gemm_kernel(
     half_t* __restrict__ C_ptr,        // [M x N] Col-Major 输出
     int M, int N, int K)               // 矩阵维度 (运行时)
 {
-    // ---- Shared Memory ----
+    // ---- 动态 Shared Memory ----
+    // kernel启动时指定smem_size, 这里reinterpret为SharedStorage布局
     extern __shared__ char shared_memory[];
     using SmemStorage = SharedStorage<ASmemLayout, BSmemLayout>;
     SmemStorage& smem = *reinterpret_cast<SmemStorage*>(shared_memory);
@@ -106,13 +112,17 @@ __global__ void shared_mem_gemm_kernel(
     auto gC = local_tile(mC, cta_tiler, cta_coord, Step<_1, _1, X>{});
 
     // ---- Shared Memory Tensor ----
+    // 使用预定义的swizzled布局 (编译期, 由host端传入)
     auto sA = make_tensor(make_smem_ptr(smem.A.begin()), ASmemLayout{});
     auto sB = make_tensor(make_smem_ptr(smem.B.begin()), BSmemLayout{});
 
-    // ---- G2S Copy (Global → Shared, cp.async) ----
+    // ---- G2S Copy (Global → Shared, cp.async 128-bit) ----
+    // 每个线程参与G2S拷贝, 分工由copyA/copyB的thread layout决定
     TiledCopyA copyA{};
     TiledCopyB copyB{};
 
+    // partition_S: 源(Gobal)按线程分区, 结果带k_tiles维度
+    // partition_D: 目标(SMEM)按线程分区, 不含k_tiles (直接写入)
     ThrCopy thr_copy_a = copyA.get_slice(threadIdx.x);
     Tensor tAgA = thr_copy_a.partition_S(gA);   // (CPY, CPY_M, CPY_K, k_tiles)
     Tensor tAsA = thr_copy_a.partition_D(sA);   // (CPY, CPY_M, CPY_K)
@@ -121,15 +131,18 @@ __global__ void shared_mem_gemm_kernel(
     Tensor tBgB = thr_copy_b.partition_S(gB);   // (CPY, CPY_N, CPY_K, k_tiles)
     Tensor tBsB = thr_copy_b.partition_D(sB);   // (CPY, CPY_N, CPY_K)
 
-    // ---- TiledMMA ----
+    // ---- TiledMMA: 计算部分 ----
     TiledMMA tiled_mma{};
-    ThrMMA thr_mma = tiled_mma.get_slice(threadIdx.x);
+    ThrMMA thr_mma = tiled_mma.get_slice(threadIdx.x);  // 获取线程MMA视图
 
+    // partition_C: 将C的当前CTA tile按MMA线程布局分区
+    // make_fragment_C: 创建累加器寄存器fragment (形状对齐MMA)
     Tensor tCgC = thr_mma.partition_C(gC);
     Tensor tCrC = tiled_mma.make_fragment_C(tCgC);
-    clear(tCrC);
+    clear(tCrC);  // 累加器初始化为0
 
-    // A/B register fragments
+    // partition_fragment_A/B: 以SMEM tensor为模板创建寄存器fragment
+    // fragment布局与MMA的ALayout/BLayout对齐
     Tensor tCrA = thr_mma.partition_fragment_A(sA);
     Tensor tCrB = thr_mma.partition_fragment_B(sB);
 
@@ -255,22 +268,26 @@ void test_gemm(int M, int N, int K) {
     CUDA_CHECK(cudaMemcpy(d_B, h_B, N * K * sizeof(half_t), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_C, h_C, M * N * sizeof(half_t), cudaMemcpyHostToDevice));
 
-    // TiledMMA: 2x2 MMA atoms, 32x32x16 tiling for LDSM compatibility
+    // TiledMMA: Tile<_32,_32,_16>确保LDSM兼容
+    // Layout<Shape<_2,_2>>: 2x2个MMA Atom, 覆盖32x32的输出块
     auto tiled_mma = make_tiled_mma(MMAAtom{},
                                     Layout<Shape<_2, _2>>{},
                                     Tile<_32, _32, _16>{});
 
     // Swizzled Shared Memory 布局
-    // Swizzle<3,3,3> 打乱行访问模式，避免 bank conflict
+    // Swizzle<3,3,3>: XOR-based地址打乱, 3个参数控制XOR掩码
+    // 内层Layout: _8 x (_8,_8) 是swizzle的基本atom形状 (8,64)
+    // composition: 将swizzle与atom布局组合
     auto swizzle_atom = composition(
         Swizzle<3, 3, 3>{},
-        Layout<Shape<_8, Shape<_8, _8>>,
-               Stride<_8, Stride<_1, _64>>>{}
+        Layout<Shape<_8, Shape<_8, _8>>,     // atom shape: 8 rows, (8,8) cols
+               Stride<_8, Stride<_1, _64>>>{}  // stride: 行内1, 64bank交错
     );
+    // tile_to_shape: 将atom扩展到完整tile大小 (bM, bK)
     auto sA = tile_to_shape(swizzle_atom, make_shape(Int<bM>{}, Int<bK>{}));
     auto sB = tile_to_shape(swizzle_atom, make_shape(Int<bN>{}, Int<bK>{}));
 
-    // G2S Copy (cp.async, 128-bit)
+    // G2S Copy (cp.async, 128-bit = 8个half/线程)
     using G2SAtom = Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, half_t>;
     auto copyA = make_tiled_copy(G2SAtom{},
                                  Layout<Shape<_16, _8>, Stride<_8, _1>>{},
@@ -279,17 +296,23 @@ void test_gemm(int M, int N, int K) {
                                  Layout<Shape<_16, _8>, Stride<_8, _1>>{},
                                  Layout<Shape<_1, _8>>{});
 
-    // Shared Memory 大小
+    // 计算动态SMEM大小 (swizzled布局可能比你想象的大)
     int smem_size = int(sizeof(SharedStorage<decltype(sA), decltype(sB)>));
 
+    // grid: 2D grid, 每个block处理一个(bM, bN)的C块
+    // block: tiled_mma包含的线程数 (128线程, 2x2 atoms * 32 threads)
     dim3 grid(ceil_div(M, bM), ceil_div(N, bN));
     dim3 block(size(tiled_mma));
 
+    // 模板实例化: 所有编译期配置通过模板参数传入kernel
     auto kernel = shared_mem_gemm_kernel<decltype(sA), decltype(sB),
                                           decltype(copyA), decltype(copyB),
                                           decltype(tiled_mma)>;
+
+    // 设置动态SMEM上限 (否则smem_size>48KB会失败)
     CUDA_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size));
 
+    // kernel启动: <<<2D grid, 线程数, 动态SMEM大小>>>
     kernel<<<grid, block, smem_size>>>(d_A, d_B, d_C, M, N, K);
     CUDA_CHECK(cudaDeviceSynchronize());
 

@@ -52,18 +52,19 @@ using namespace cute;
 using MMA_OpType = SM80_16x8x16_F16F16F16F16_TN;
 using MMAAtom = MMA_Atom<MMA_OpType>;
 
+// CTA tile: 每个block处理128x128的C子矩阵
 constexpr int bM = 128;
 constexpr int bN = 128;
-constexpr int bK = 64;
-constexpr int K_PIPE_MAX = 3;
+constexpr int bK = 64;           // K方向tile (swizzle atom=64的倍数)
+constexpr int K_PIPE_MAX = 3;    // 3级流水线缓冲
 
 // ============================================================================
-// SharedStorage
+// SharedStorage: 编译期分配SMEM
 // ============================================================================
 
 template <class SmemLayoutA, class SmemLayoutB>
 struct SharedStorage {
-    cute::ArrayEngine<half_t, cute::cosize_v<SmemLayoutA>> A;
+    cute::ArrayEngine<half_t, cute::cosize_v<SmemLayoutA>> A;  // cosize_v计算所需元素数
     cute::ArrayEngine<half_t, cute::cosize_v<SmemLayoutB>> B;
 };
 
@@ -157,24 +158,27 @@ gemm_kernel(
     Tensor tXrB = s2r_thr_b.retile_D(tCrB);
 
     // ---- Pipeline 状态 ----
-    int k_tile_count = size<3>(tAgA);  // 总K-tile数
-    int k_tile_next = 0;                // 下一个待发起的K-tile索引
+    int k_tile_count = size<3>(tAgA);  // 本CTA负责的K-tile总数
+    int k_tile_next = 0;                // 下一个待发起cp.async的K-tile索引
 
     // ========================================================================
-    // Prologue: 预取K_PIPE_MAX-1个tile, 填充流水线
+    // Prologue: 预取K_PIPE_MAX-1个tile = 填充流水线前2个槽
+    // 例: K_PIPE_MAX=3 → 预取tile[0]到pipe[0], tile[1]到pipe[1]
     // ========================================================================
 
     CUTE_UNROLL
     for (int k_pipe = 0; k_pipe < K_PIPE_MAX - 1; ++k_pipe) {
         cute::copy(copyA, tAgA(_, _, _, k_tile_next), tAsA(_, _, _, k_pipe));
         cute::copy(copyB, tBgB(_, _, _, k_tile_next), tBsB(_, _, _, k_pipe));
-        cp_async_fence();
+        cp_async_fence();  // 每次copy后提交为一组
         --k_tile_count;
         if (k_tile_count > 0) { ++k_tile_next; }
     }
 
+    // K_BLOCK_MAX: bK/MMA_K, 例 64/16=4, 即每个K-tile分4次MMA
     auto K_BLOCK_MAX = size<2>(tCrA);
 
+    // 初始pipe指针: read指向第0槽(有数据), write指向最后一槽(空)
     int smem_pipe_read  = 0;
     int smem_pipe_write = K_PIPE_MAX - 1;
 
@@ -349,7 +353,7 @@ bool verify(const half_t* gpu_C, const half_t* cpu_C, int M, int N) {
 }
 
 // ============================================================================
-// 计时工具
+// 计时工具: CUDA Event 精确计时
 // ============================================================================
 
 struct CudaTimer {
@@ -383,6 +387,7 @@ void perf_test(int M, int N, int K, bool do_verify = true) {
     half_t* h_B = new half_t[N * K];
     half_t* h_C = new half_t[M * N];
 
+    // 随机初始化, 范围[-0.5, 0.5)
     srand(42);
     for (int i = 0; i < M * K; i++) h_A[i] = static_cast<half_t>((float)(rand() % 100) / 100.0f - 0.5f);
     for (int i = 0; i < N * K; i++) h_B[i] = static_cast<half_t>((float)(rand() % 100) / 100.0f - 0.5f);
@@ -396,11 +401,11 @@ void perf_test(int M, int N, int K, bool do_verify = true) {
     CUDA_CHECK(cudaMemcpy(d_A, h_A, M * K * sizeof(half_t), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_B, h_B, N * K * sizeof(half_t), cudaMemcpyHostToDevice));
 
-    // Warmup
+    // Warmup: 预热GPU (消除首次启动开销)
     gemm_tn(M, N, K, d_A, d_B, d_C);
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Timing
+    // Timing: 多次迭代取平均
     const int WARMUP = 5;
     const int ITERS = 20;
 
@@ -417,6 +422,8 @@ void perf_test(int M, int N, int K, bool do_verify = true) {
     timer.stop();
     float avg_ms = timer.elapsed_ms() / ITERS;
 
+    // GFLOPS = 2*M*N*K / (时间秒)
+    // 2*: 每个FMA算2次浮点操作
     double flops = 2.0 * M * N * K;
     double gflops = flops / (avg_ms * 1e6);
 
@@ -469,10 +476,11 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // 默认 1024x1024x1024, 命令行可覆盖
     int M = 1024, N = 1024, K = 1024;
-    if (argc >= 2) M = atoi(argv[1]);
-    if (argc >= 3) N = atoi(argv[2]);
-    if (argc >= 4) K = atoi(argv[3]);
+    if (argc >= 2) M = atoi(argv[1]);  // ./12_perf_async_gemm 2048
+    if (argc >= 3) N = atoi(argv[2]);  // ./12_perf_async_gemm 2048 2048
+    if (argc >= 4) K = atoi(argv[3]);  // ./12_perf_async_gemm 2048 2048 1024
 
     std::cout << "GEMM: C(" << M << "x" << N << ") = A(" << M << "x" << K << ") * B(" << N << "x" << K << ")" << std::endl;
     std::cout << "Block tile: " << bM << "x" << bN << "x" << bK << std::endl;
@@ -481,12 +489,12 @@ int main(int argc, char** argv) {
 
     perf_test(M, N, K);
 
-    // 不同尺寸的测试 (仅在无参数时)
+    // 多尺寸benchmark (仅在无参数时运行, 否则只跑指定尺寸)
     if (argc < 2) {
-        perf_test(256, 256, 256);
-        perf_test(512, 512, 512);
-        perf_test(2048, 2048, 2048);
-        perf_test(4096, 4096, 4096);
+        perf_test(256, 256, 256);      // 小型
+        perf_test(512, 512, 512);      // 中型
+        perf_test(2048, 2048, 2048);   // 大型
+        perf_test(4096, 4096, 4096);   // RTX 3060 6GB: 约使用3GB显存
     }
 
     std::cout << "========================================" << std::endl;

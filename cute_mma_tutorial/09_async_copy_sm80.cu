@@ -44,10 +44,14 @@ using namespace cute;
 // 配置
 // ============================================================================
 
-// Tile: 16 rows x 64 columns of half_t
-// Thread layout: 16x8 = 128 threads, K-major stride
-// Value layout: 1x8 (每个 thread 拷贝 8 个 half = 16 bytes = 128 bits)
-// 总元素: 16 * 64 = 1024 = 128 threads * 8 values
+// make_tiled_copy 的三个参数决定tile大小:
+//   atom:           Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<uint128_t>, half_t>
+//                   → 每条cp.async指令搬16B = 8个half
+//   thread_layout:  Layout<Shape<_16,_8>, Stride<_8,_1>>
+//                   → 128线程排成16行8列, 行内stride=1(连续线程)
+//   value_layout:   Layout<Shape<_1,_8>>
+//                   → 每线程8个half (1x8)
+// 总tile: 16x64 = 1024 half = 128线程 * 8值/线程
 
 constexpr int TILE_M = 16;
 constexpr int TILE_N = 64;
@@ -132,13 +136,13 @@ __global__ void async_copy_kernel(
 //   必须等待拷贝完成才能继续
 
 __global__ void sync_copy_kernel(
-    const half_t* __restrict__ src,
-    half_t* __restrict__ dst,
-    int total_elems)
+    const half_t* __restrict__ src,  // 源Global内存
+    half_t* __restrict__ dst,        // 目标Global内存 (验证用)
+    int total_elems)                 // 总元素数
 {
-    extern __shared__ half_t smem[];
+    extern __shared__ half_t smem[];  // 同步拷贝不需要__align__(16)
 
-    // UniversalCopy<uint128_t>: 同步 128-bit 拷贝
+    // UniversalCopy: 同步拷贝, 数据路径 Global→Register→Shared
     using CopyAtom = Copy_Atom<UniversalCopy<uint128_t>, half_t>;
 
     auto copy_op = make_tiled_copy(
@@ -203,8 +207,8 @@ void test_copy(bool async) {
     const char* name = async ? "cp.async 异步拷贝" : "同步拷贝";
     std::cout << "=== 测试: " << name << " ===" << std::endl;
 
-    constexpr int TILE_ELEMS = TILE_M * TILE_N;
-    const int N = TILE_ELEMS * 1024;  // 1024 tiles = 1M elements
+    constexpr int TILE_ELEMS = TILE_M * TILE_N;   // 1024
+    const int N = TILE_ELEMS * 1024;               // 1024个tile = 1M元素
 
     half_t* h_src = new half_t[N];
     half_t* h_dst = new half_t[N];
@@ -218,10 +222,13 @@ void test_copy(bool async) {
     CUDA_CHECK(cudaMalloc(&d_dst, N * sizeof(half_t)));
     CUDA_CHECK(cudaMemcpy(d_src, h_src, N * sizeof(half_t), cudaMemcpyHostToDevice));
 
-    int grid_size = N / TILE_ELEMS;
+    int grid_size = N / TILE_ELEMS;                // 1024个block
     int smem_bytes = TILE_ELEMS * sizeof(half_t);
-    if (async) smem_bytes = (smem_bytes + 15) & ~15;  // 16-byte 对齐
 
+    // cp.async要求shared memory 16字节对齐
+    if (async) smem_bytes = (smem_bytes + 15) & ~15;
+
+    // kernel启动: <<<grid, block, shared_mem_bytes>>>
     if (async) {
         async_copy_kernel<<<grid_size, BLOCK_SIZE, smem_bytes>>>(d_src, d_dst, N);
     } else {

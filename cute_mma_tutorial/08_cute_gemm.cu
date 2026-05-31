@@ -41,13 +41,17 @@ using namespace cute;
 // GEMM 配置
 // ============================================================================
 
+// SM80_16x8x8_F32F16F16F32_TN:
+//   M=16, N=8, K=8: Tensor Core一次处理16x8的输出, K=8的内积
+//   F32=F32F16F16F32: 输入A/B=F16, 累加器C/D=F32
+//   TN: A是Row-Major (M,K), B是Row-Major (N,K)
 using MMA_OpType = SM80_16x8x8_F32F16F16F32_TN;
-using MMA = MMA_Atom<MMA_OpType>;
-
-constexpr int MMA_M = size<0>(MMA::Shape_MNK{});
-constexpr int MMA_N = size<1>(MMA::Shape_MNK{});
-constexpr int MMA_K = size<2>(MMA::Shape_MNK{});
-constexpr int NUM_THREADS = 32;
+using MMA = MMA_Atom<MMA_OpType>;         // 单个MMA指令的CuTe抽象
+                                          // MMA::Shape_MNK = (_16,_8,_8)
+constexpr int MMA_M = size<0>(MMA::Shape_MNK{});  // 16
+constexpr int MMA_N = size<1>(MMA::Shape_MNK{});  // 8
+constexpr int MMA_K = size<2>(MMA::Shape_MNK{});  // 8
+constexpr int NUM_THREADS = 32;           // 一个warp, MMA固定32线程
 
 // ============================================================================
 // GEMM Kernel
@@ -116,6 +120,8 @@ __global__ void cute_gemm_kernel(
 // 验证函数
 // ============================================================================
 
+// CPU参考GEMM: C[m][n] = sum_k(A[m][k] * B[n][k]) + C[m][n]
+// B是TN格式: (N,K) Row-Major, 所以B[n*K+k]对应B[n][k]
 void verify_gemm(const float* C, const half* A, const half* B,
                  int M, int N, int K) {
     float max_err = 0.0f;

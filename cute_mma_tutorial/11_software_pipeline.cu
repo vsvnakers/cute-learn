@@ -50,11 +50,15 @@ using namespace cute;
 using MMA_OpType = SM80_16x8x16_F16F16F16F16_TN;
 using MMAAtom = MMA_Atom<MMA_OpType>;
 
+// CTA tile大小: 每个block处理128x128的输出
 constexpr int bM = 128;
 constexpr int bN = 128;
-constexpr int bK = 64;   // swizzle atom 的倍数
+constexpr int bK = 64;   // K方向tile, 必须是swizzle atom(64)的倍数
 
-// Pipeline 深度
+// 流水线深度: 3级缓冲 = 同时有至多3个未完成的cp.async组
+//   pipe[0]: 正在被MMA使用
+//   pipe[1]: 已完成拷贝, 等待使用
+//   pipe[2]: 正在被cp.async填充
 constexpr int K_PIPE_MAX = 3;
 
 // SharedStorage
@@ -121,6 +125,8 @@ __global__ void pipeline_gemm_kernel(
     Tensor tCrC = mma.make_fragment_C(tCgC);
     clear(tCrC);
 
+    // partition_fragment_A/B: 以SMEM的单个pipeline槽(槽0)为模板
+    // sA(_,_,0): 取第0个pipeline槽的(M,K)视图作为形状参考
     Tensor tCrA = thr_mma.partition_fragment_A(sA(_, _, 0));
     Tensor tCrB = thr_mma.partition_fragment_B(sB(_, _, 0));
 
@@ -149,6 +155,8 @@ __global__ void pipeline_gemm_kernel(
     int smem_pipe_read  = 0;
     int smem_pipe_write = K_PIPE_MAX - 1;
 
+    // K_BLOCK_MAX: MMA在K方向需要几个sub-step
+    // 例: bK=64, MMA_K=16 → K_BLOCK_MAX=4
     auto K_BLOCK_MAX = size<2>(tCrA);
 
     // ========================================================================
@@ -298,7 +306,9 @@ void test_pipeline_gemm(int M, int N, int K) {
                                     Layout<Shape<_2, _2>>{},
                                     Tile<_32, _32, _16>{});
 
-    // Swizzled Shared Memory (带 pipeline 维度)
+    // Swizzled Shared Memory (带pipeline维度 = K_PIPE_MAX个槽)
+    // tile_to_shape扩展到(bM, bK, K_PIPE_MAX): 3份独立的SMEM缓冲
+    // 每份缓冲都有swizzle布局避免bank conflict
     auto swizzle_atom = composition(
         Swizzle<3, 3, 3>{},
         Layout<Shape<_8, Shape<_8, _8>>,
